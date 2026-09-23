@@ -1,0 +1,103 @@
+-- ตั้งค่าเปิด/ปิดระบบต่างๆ
+shared.AutoInteract = true
+shared.AntiAFK = true
+shared.SkipCutscene = false -- ปิดระบบคัทซีนตามต้องการ
+shared.TweenSpeed = 100 -- ความเร็วในการบิน/เคลื่อนที่
+
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- ฟังก์ชันสำหรับเคลื่อนที่ตัวละครอย่างปลอดภัย (Tween)
+local function teleportTo(targetCFrame)
+    local character = LocalPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local distance = (hrp.Position - targetCFrame.Position).Magnitude
+    local duration = distance / shared.TweenSpeed
+    
+    local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
+    local tween = TweenService:Create(hrp, tweenInfo, {CFrame = targetCFrame})
+    
+    tween:Play()
+    tween.Completed:Wait() -- รอจนกว่าจะบินไปถึงเป้าหมาย
+end
+
+----------------------------------------------------------------
+-- 1. ระบบ Auto Interact + บินล่ากล่อง (เวอร์ชันซ่อมแซมอาการนิ่งสนิท บินชัวร์ แรมไม่รั่ว)
+----------------------------------------------------------------
+task.spawn(function()
+    while shared.AutoInteract do
+        pcall(function()
+            -- ⚡ สร้างตารางชั่วคราวเพื่อเก็บ ProximityPrompt ที่จะเคลียร์ค่าทิ้งทุกรอบเพื่อไม่ให้ RAM รั่วไหล
+            local prompts = {}
+            
+            -- วนลูปหา ProximityPrompt ทั่วทั้ง Workspace เพื่อแก้ปัญหากล่องที่เซิร์ฟเวอร์ซ่อนปุ่มไว้
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                if not shared.AutoInteract then break end
+                -- ยอมรับทั้งปุ่มที่เปิดอยู่ และปุ่มที่ถูกปิดการทำงานไว้ (เพื่อเข้าไปปลดล็อก)
+                if obj:IsA("ProximityPrompt") then
+                    table.insert(prompts, obj)
+                end
+            end
+
+            -- ประมวลผลแต่ละปุ่มที่เจอ
+            for _, obj in ipairs(prompts) do
+                if not shared.AutoInteract then break end
+                if not obj or not obj.Parent then continue end
+                
+                -- หาตำแหน่งของวัตถุที่เป็นเจ้าของปุ่ม
+                local targetPart = obj:FindFirstAncestorOfClass("Part") or obj:FindFirstAncestorOfClass("MeshPart") or obj.Parent
+                
+                if targetPart and targetPart:IsA("BasePart") then
+                    -- 💥 บังคับเปิดใช้งานและขยายระยะทางฝั่ง Client ของเรา เพื่อให้ปุ่มพร้อมทำงาน
+                    obj.Enabled = true
+                    obj.RequiresLineOfSight = false
+                    obj.MaxActivationDistance = 32
+                    
+                    -- 1. บินไปที่กล่องนั้น (เว้นระยะเหนือหัว 3 หน่วยเพื่อความปลอดภัย)
+                    teleportTo(targetPart.CFrame * CFrame.new(0, 3, 0))
+                    task.wait(0.25) -- หน่วงเวลาเล็กน้อยให้ตำแหน่งซิงค์เสถียร
+                    
+                    -- 2. ส่งสัญญาณกดปุ่มเก็บของ
+                    if fireproximityprompt then
+                        fireproximityprompt(obj)
+                    else
+                        obj:InputHoldBegin()
+                        task.wait(obj.HoldDuration)
+                        obj:InputHoldEnd()
+                    end
+                    
+                    task.wait(0.4) -- หน่วงเวลารอกล่องเปิดเสร็จ
+                end
+            end
+            
+            -- 🧹 ทำลายตารางทิ้งทันทีที่จบลูป เพื่อปลดปล่อยหน่วยความจำ (RAM) คืนสู่ระบบ
+            prompts = nil
+        end)
+        
+        -- 🧼 บังคับ Executor และระบบของ Roblox ทำความสะอาดแรมขยะ (Garbage Collection)
+        if gcinfo then gcinfo() end
+        if collectgarbage then collectgarbage("collect") end
+        
+        task.wait(2) -- เว้นจังหวะพักรอบ 2 วินาที ช่วยลดความร้อน CPU ได้อย่างมหาศาล
+    end
+end)
+
+----------------------------------------------------------------
+-- 2. ระบบ Anti-AFK (Event-Based ไม่กินทรัพยากรเครื่อง)
+----------------------------------------------------------------
+if shared.AntiAFK then
+    pcall(function()
+        if shared.AntiAFKConnection then shared.AntiAFKConnection:Disconnect() end
+        shared.AntiAFKConnection = LocalPlayer.Idled:Connect(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.F15, false, game)
+            task.wait(0.05)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.F15, false, game)
+        end)
+    end)
+end
