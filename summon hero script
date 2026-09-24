@@ -1,0 +1,109 @@
+-- ตั้งค่าเปิด/ปิดระบบต่างๆ
+shared.AutoInteract = true
+shared.AntiAFK = true
+shared.SkipCutscene = false -- ปิดระบบคัทซีนตามต้องการ
+shared.TweenSpeed = 100 -- ความเร็วในการบิน/เคลื่อนที่
+shared.AutoReExecute = true -- 🔄 เปิด/ปิด ระบบรันสคริปต์ซ้ำอัตโนมัติเมื่อย้ายแมพ/เซิร์ฟเวอร์
+
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local TeleportService = game:GetService("TeleportService")
+
+local LocalPlayer = Players.LocalPlayer
+
+----------------------------------------------------------------
+-- 🔄 ระบบ Re-Execute (Queue On Teleport)
+----------------------------------------------------------------
+if shared.AutoReExecute then
+    local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport)
+    if queue_on_teleport then
+        LocalPlayer.OnTeleport:Connect(function(State)
+            if State == Enum.TeleportState.Started or State == Enum.TeleportState.InProgress then
+                -- สั่งให้รันสคริปต์นี้ซ้ำอีกครั้งทันทีเมื่อย้ายเซิร์ฟเวอร์สำเร็จ
+                queue_on_teleport([[
+                    loadstring(game:HttpGet("https://raw.githubusercontent.com/gooksot321-ctrl/summon-hero-script/refs/heads/main/summin%20hero"))()
+                ]])
+            end
+        end)
+    end
+end
+
+----------------------------------------------------------------
+-- ฟังก์ชันสำหรับเคลื่อนที่ตัวละครอย่างปลอดภัย (Tween)
+----------------------------------------------------------------
+local function teleportTo(targetCFrame)
+    local character = LocalPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local distance = (hrp.Position - targetCFrame.Position).Magnitude
+    local duration = distance / shared.TweenSpeed
+    
+    local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
+    local tween = TweenService:Create(hrp, tweenInfo, {CFrame = targetCFrame})
+    
+    tween:Play()
+    tween.Completed:Wait() -- รอจนกว่าจะบินไปถึงเป้าหมาย
+end
+
+----------------------------------------------------------------
+-- 1. ระบบ Auto Interact + บินล่ากล่อง (เวอร์ชันสมบูรณ์ แรมไม่รั่ว)
+----------------------------------------------------------------
+task.spawn(function()
+    while shared.AutoInteract do
+        pcall(function()
+            -- ⚡ สร้างตารางชั่วคราวเพื่อเก็บ ProximityPrompt ที่จะเคลียร์ค่าทิ้งทุกรอบเพื่อไม่ให้ RAM รั่วไหล
+            local prompts = {}
+            
+            -- วนลูปหา ProximityPrompt ทั่วทั้ง Workspace
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                if not shared.AutoInteract then break end
+                if obj:IsA("ProximityPrompt") then
+                    table.insert(prompts, obj)
+                end
+            end
+
+            -- ประมวลผลแต่ละปุ่มที่เจอ
+            for _, obj in ipairs(prompts) do
+                if not shared.AutoInteract then break end
+                
+                if obj and obj.Parent then
+                    obj.Enabled = true
+                    
+                    local targetCFrame = nil
+                    if obj.Parent:IsA("Model") and obj.Parent.PrimaryPart then
+                        targetCFrame = obj.Parent.PrimaryPart.CFrame
+                    elseif obj.Parent:IsA("BasePart") then
+                        targetCFrame = obj.Parent.CFrame
+                    end
+
+                    if targetCFrame then
+                        local originalMaxDistance = obj.MaxActivationDistance
+                        obj.MaxActivationDistance = 99999
+                        
+                        -- 🚀 บินไปยังเป้าหมาย
+                        teleportTo(targetCFrame)
+                        task.wait(0.1)
+                        
+                        -- 🔥 สั่งกดปุ่ม (Interact)
+                        obj:InputHoldBegin()
+                        task.wait(obj.HoldDuration + 0.05)
+                        obj:InputHoldEnd()
+                        
+                        if obj and obj.Parent then
+                            obj.MaxActivationDistance = originalMaxDistance
+                        end
+                        
+                        task.wait(0.2)
+                    end
+                end
+            end
+            
+            table.clear(prompts)
+        end)
+        
+        task.wait(1)
+    end
+end)
